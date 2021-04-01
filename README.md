@@ -35,6 +35,12 @@ bazel-compdb # This will generate compile_commands.json in your workspace root.
 # You can tweak some behavior with flags:
 # 1. To use the source dir instead of bazel-execroot for directory in which clang commands are run.
 bazel-compdb -s
+
+# 2. To use a list of regex to filter out the bazel targets.
+# For example, to filter out any target contains 'algorithm', or starts with
+# '//absl/memory', or ends with 'internal':
+echo -e "algorithm\n^//absl/memory\ninternal$" > path_to_filters.txt
+bazel-compdb -s -f path_to_filters.txt
 ```
 
 ### Selected targets

@@ -23,16 +23,19 @@
 set -e
 
 source_dir=0
+target_filters_file=""
 
 usage() {
   printf "usage: %s flags\nwhere flags can be:\n" "${BASH_SOURCE[0]}"
   printf "\t-s\tuse the original source directory instead of bazel execroot\n"
+  printf "\t-f target_filters.txt\trows of regex to filter out bazel targets instead of all of them\n"
   printf "\n"
 }
 
-while getopts "sh" opt; do
+while getopts "shf:" opt; do
   case "${opt}" in
     "s") source_dir=1 ;;
+	"f") target_filters_file=${OPTARG};;
     "h") usage; exit 0;;
     *) >&2 echo "invalid option ${opt}"; exit 1;;
   esac
@@ -99,6 +102,39 @@ if [[ -e "${EXEC_ROOT}" ]]; then
   find "${EXEC_ROOT}" -name '*.compile_commands.json' -delete
 fi
 
+# Dealing with string split/concatenate is not fun in bash, so I choose
+# Python3 (Python2 also works) to handle the regex filtering.
+# https://docs.python.org/3/howto/regex.html
+TARGETS_FILE="/tmp/bazel-targets.txt"
+TARGETS=$("${QUERY_CMD[@]}")
+echo "$TARGETS" > $TARGETS_FILE
+PY_FILTER_SRC="
+import re
+filter_file = '$target_filters_file'
+fin = '$TARGETS_FILE'
+fout = '$TARGETS_FILE'
+
+with open(fin) as f:
+    targets = [target.rstrip() for target in f]
+
+print('Found {} targets'.format(len(targets)))
+if filter_file:
+    with open(filter_file) as f:
+        lines = [line.rstrip() for line in f]
+        lines = ['(' + line + ')' for line in lines if line]
+        pattern = re.compile('|'.join(lines))
+        print('Loaded {} filter rules= {}'.format(len(lines), pattern.pattern))
+    targets = [target for target in targets if pattern.search(target)]
+    print('Found {} targets after filtering'.format(len(targets)))
+
+with open(fout, 'w') as f:
+    f.write(' '.join(targets))
+"
+
+python -c "$PY_FILTER_SRC"
+TARGETS=`cat $TARGETS_FILE`
+rm $TARGETS_FILE
+
 # shellcheck disable=SC2046
 "$BAZEL" build \
   "--override_repository=bazel_compdb=${ASPECTS_DIR}" \
@@ -106,8 +142,7 @@ fi
   "--noshow_progress" \
   "--noshow_loading_progress" \
   "--output_groups=${OUTPUT_GROUPS}" \
-  "$@" \
-  $("${QUERY_CMD[@]}") > /dev/null
+  $TARGETS > /dev/null
 
 echo "[" > "${COMPDB_FILE}"
 find "${EXEC_ROOT}" -name '*.compile_commands.json' -not -empty -exec bash -c 'cat "$1" && echo ,' _ {} \; \
